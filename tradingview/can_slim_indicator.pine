@@ -1,0 +1,17 @@
+//@version=5
+indicator("CAN SLIM Indicator", overlay=true)
+
+lookback = input.int(50, "Pivot Lookback")
+buffer = input.float(0.05, "Buy Point Buffer %")
+
+pivot = ta.highest(high, lookback)
+buyPoint = pivot * (1 + buffer)
+
+volumeAvg = ta.sma(volume, 20)
+breakout = close > buyPoint and volume > volumeAvg * 1.5
+
+plot(pivot, "Pivot", color.blue, 2)
+plot(buyPoint, "Buy Point", color.green, 2)
+plotshape(breakout, "Breakout", shape.triangleup, location.belowbar, color.lime)
+
+alertcondition(breakout, "Breakout Alert", "{{ticker}} breakout!")
