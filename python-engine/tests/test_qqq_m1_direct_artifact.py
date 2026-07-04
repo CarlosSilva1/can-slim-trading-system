@@ -1,8 +1,4 @@
-"""Temporary QQQ M1 exporter using GitHub Actions Results artifact protocol.
-
-The historical market data is obtained from the free Dukascopy chart endpoint.
-The output ZIP is published only as an artifact of this GitHub Actions run.
-"""
+"""Temporary QQQ M1 exporter using GitHub Actions Results artifact protocol."""
 from __future__ import annotations
 
 import base64
@@ -18,7 +14,8 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-ARTIFACT_NAME = "qqq-m1-2026-validation-direct-v3"
+ARTIFACT_NAME = "qqq-m1-2026-validation-direct-v4"
+DIAG_NAME = "qqq-runtime-protocol-diag-v1"
 SERVICE = "github.actions.results.api.v1.ArtifactService"
 
 
@@ -48,17 +45,43 @@ def _twirp(results_url: str, token: str, method: str, payload: dict) -> dict:
     parsed = urllib.parse.urlsplit(results_url)
     base = f"{parsed.scheme}://{parsed.netloc}"
     url = f"{base}/twirp/{SERVICE}/{method}"
-    r = requests.post(
-        url,
-        json=payload,
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        timeout=120,
-    )
+    r = requests.post(url, json=payload, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, timeout=120)
     print(f"TWIRP_{method}_STATUS", r.status_code)
     if r.status_code >= 400:
         print(f"TWIRP_{method}_BODY", r.text[:2000])
     r.raise_for_status()
     return r.json()
+
+
+def _runtime_context():
+    token = os.environ.get("ACTIONS_RUNTIME_TOKEN")
+    results_url = os.environ.get("ACTIONS_RESULTS_URL")
+    if not token or not results_url:
+        raise RuntimeError("GitHub Actions Results runtime variables are missing")
+    run_backend_id, job_backend_id = _backend_ids(token)
+    return token, results_url, run_backend_id, job_backend_id
+
+
+def _finalize_zero_diag() -> dict:
+    token, results_url, run_id, job_id = _runtime_context()
+    created = _twirp(results_url, token, "CreateArtifact", {
+        "workflow_run_backend_id": run_id,
+        "workflow_job_run_backend_id": job_id,
+        "name": DIAG_NAME,
+        "version": 7,
+        "mime_type": "application/zip",
+    })
+    if not created.get("ok"):
+        raise RuntimeError(f"diag CreateArtifact not ok: {created}")
+    finalized = _twirp(results_url, token, "FinalizeArtifact", {
+        "workflow_run_backend_id": run_id,
+        "workflow_job_run_backend_id": job_id,
+        "name": DIAG_NAME,
+        "size": "0",
+    })
+    if not finalized.get("ok"):
+        raise RuntimeError(f"diag FinalizeArtifact not ok: {finalized}")
+    return finalized
 
 
 def _add_query(url: str, **params: str) -> str:
@@ -69,26 +92,20 @@ def _add_query(url: str, **params: str) -> str:
 
 
 def _azure_block_blob_upload(signed_url: str, content: bytes) -> None:
-    """Upload like BlockBlobClient.uploadStream: stage blocks, then commit list."""
     chunk_size = 8 * 1024 * 1024
     block_ids: list[str] = []
     common = {"x-ms-version": "2021-12-02"}
     for index, offset in enumerate(range(0, len(content), chunk_size)):
         chunk = content[offset: offset + chunk_size]
-        raw_id = f"block-{index:08d}".encode("ascii")
-        block_id = base64.b64encode(raw_id).decode("ascii")
+        block_id = base64.b64encode(f"block-{index:08d}".encode("ascii")).decode("ascii")
         block_ids.append(block_id)
-        block_url = _add_query(signed_url, comp="block", blockid=block_id)
-        r = requests.put(block_url, data=chunk, headers=common, timeout=300)
+        r = requests.put(_add_query(signed_url, comp="block", blockid=block_id), data=chunk, headers=common, timeout=300)
         print("AZURE_STAGE_BLOCK", index, r.status_code, len(chunk))
         if r.status_code >= 400:
             print("AZURE_STAGE_BLOCK_BODY", r.text[:2000])
         r.raise_for_status()
-
     xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?><BlockList>" + "".join(f"<Latest>{bid}</Latest>" for bid in block_ids) + "</BlockList>"
-    commit_url = _add_query(signed_url, comp="blocklist")
-    headers = {**common, "Content-Type": "application/xml", "x-ms-blob-content-type": "application/zip"}
-    r = requests.put(commit_url, data=xml.encode("utf-8"), headers=headers, timeout=300)
+    r = requests.put(_add_query(signed_url, comp="blocklist"), data=xml.encode("utf-8"), headers={**common, "Content-Type": "application/xml", "x-ms-blob-content-type": "application/zip"}, timeout=300)
     print("AZURE_COMMIT_BLOCK_LIST", r.status_code)
     if r.status_code >= 400:
         print("AZURE_COMMIT_BODY", r.text[:2000])
@@ -96,15 +113,10 @@ def _azure_block_blob_upload(signed_url: str, content: bytes) -> None:
 
 
 def _publish_artifact(zip_path: Path) -> dict:
-    token = os.environ.get("ACTIONS_RUNTIME_TOKEN")
-    results_url = os.environ.get("ACTIONS_RESULTS_URL")
-    if not token or not results_url:
-        raise RuntimeError("GitHub Actions Results runtime variables are missing")
-    run_backend_id, job_backend_id = _backend_ids(token)
-
+    token, results_url, run_id, job_id = _runtime_context()
     create = _twirp(results_url, token, "CreateArtifact", {
-        "workflow_run_backend_id": run_backend_id,
-        "workflow_job_run_backend_id": job_backend_id,
+        "workflow_run_backend_id": run_id,
+        "workflow_job_run_backend_id": job_id,
         "name": ARTIFACT_NAME,
         "version": 7,
         "mime_type": "application/zip",
@@ -114,14 +126,12 @@ def _publish_artifact(zip_path: Path) -> dict:
     signed = create.get("signed_upload_url") or create.get("signedUploadUrl")
     if not signed:
         raise RuntimeError("CreateArtifact missing signed upload URL")
-
     content = zip_path.read_bytes()
     sha = hashlib.sha256(content).hexdigest()
     _azure_block_blob_upload(signed, content)
-
     finalize = _twirp(results_url, token, "FinalizeArtifact", {
-        "workflow_run_backend_id": run_backend_id,
-        "workflow_job_run_backend_id": job_backend_id,
+        "workflow_run_backend_id": run_id,
+        "workflow_job_run_backend_id": job_id,
         "name": ARTIFACT_NAME,
         "size": str(len(content)),
         "hash": f"sha256:{sha}",
@@ -140,7 +150,6 @@ def _write_outputs(core, outdir: Path) -> dict:
     quotes = core.merge_quotes(bid, ask)
     results = [core.simulate_event(daily, quotes, event) for event in core.EVENTS]
     trades = [r for r in results if r.get("status") == "TRADE"]
-
     equity = 0.0
     peak = 0.0
     max_dd_r = 0.0
@@ -151,13 +160,11 @@ def _write_outputs(core, outdir: Path) -> dict:
         dd = equity - peak
         max_dd_r = min(max_dd_r, dd)
         equity_curve.append({"event": r["event"], "d0": r["d0"], "pnl_r": r["pnl_r"], "equity_r": equity, "drawdown_r": dd})
-
     summary = {
         "data_source": "Dukascopy freeserv chart/json3 QQQ.US/USD 1MIN BID and ASK",
         "execution_model": "buy triggers/exits on ASK/BID; sell triggers/exits on BID/ASK; RTH only",
         "rules": "0.20 ATR20 Wilder buffer; OCO D+1 only; stop 2 ATR; take 2R; 7 sessions; Macro Shield",
-        "events": len(results),
-        "trades": len(trades),
+        "events": len(results), "trades": len(trades),
         "wins": sum(float(r["pnl_r"]) > 0 for r in trades),
         "losses": sum(float(r["pnl_r"]) < 0 for r in trades),
         "sum_r": sum(float(r["pnl_r"]) for r in trades),
@@ -167,13 +174,10 @@ def _write_outputs(core, outdir: Path) -> dict:
         "worst_mae_pct": min((float(r["mae_pct"]) for r in trades), default=0.0),
         "statuses": pd.Series([r["status"] for r in results]).value_counts().to_dict(),
         "exit_reasons": pd.Series([r["exit_reason"] for r in trades]).value_counts().to_dict(),
-        "quote_rows": len(quotes),
-        "quote_days": int(quotes["date_et"].nunique()),
-        "quote_first": str(quotes["timestamp"].min()),
-        "quote_last": str(quotes["timestamp"].max()),
+        "quote_rows": len(quotes), "quote_days": int(quotes["date_et"].nunique()),
+        "quote_first": str(quotes["timestamp"].min()), "quote_last": str(quotes["timestamp"].max()),
         "daily_crosscheck": core.compare_daily(daily, quotes),
     }
-
     bid.to_csv(outdir / "qqq_dukascopy_bid_m1_rth.csv.gz", index=False, compression="gzip")
     ask.to_csv(outdir / "qqq_dukascopy_ask_m1_rth.csv.gz", index=False, compression="gzip")
     quotes.to_csv(outdir / "qqq_dukascopy_bidask_m1_rth.csv.gz", index=False, compression="gzip")
@@ -185,6 +189,7 @@ def _write_outputs(core, outdir: Path) -> dict:
 
 
 def test_qqq_m1_direct_artifact_export():
+    print("QQQ_DIAG_FINALIZED", json.dumps(_finalize_zero_diag(), sort_keys=True))
     core = _load_core()
     outdir = Path("/tmp/qqq_m1_direct")
     if outdir.exists():
