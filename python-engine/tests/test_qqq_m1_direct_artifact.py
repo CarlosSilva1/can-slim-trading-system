@@ -11,13 +11,14 @@ import importlib.util
 import json
 import os
 import shutil
+import urllib.parse
 import zipfile
 from pathlib import Path
 
 import pandas as pd
 import requests
 
-ARTIFACT_NAME = "qqq-m1-2026-validation-direct-v2"
+ARTIFACT_NAME = "qqq-m1-2026-validation-direct-v3"
 SERVICE = "github.actions.results.api.v1.ArtifactService"
 
 
@@ -44,8 +45,8 @@ def _backend_ids(token: str) -> tuple[str, str]:
 
 
 def _twirp(results_url: str, token: str, method: str, payload: dict) -> dict:
-    origin = results_url.split("/", 3)[:3]
-    base = "/".join(origin)
+    parsed = urllib.parse.urlsplit(results_url)
+    base = f"{parsed.scheme}://{parsed.netloc}"
     url = f"{base}/twirp/{SERVICE}/{method}"
     r = requests.post(
         url,
@@ -60,6 +61,40 @@ def _twirp(results_url: str, token: str, method: str, payload: dict) -> dict:
     return r.json()
 
 
+def _add_query(url: str, **params: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    query.extend(params.items())
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urllib.parse.urlencode(query), parsed.fragment))
+
+
+def _azure_block_blob_upload(signed_url: str, content: bytes) -> None:
+    """Upload like BlockBlobClient.uploadStream: stage blocks, then commit list."""
+    chunk_size = 8 * 1024 * 1024
+    block_ids: list[str] = []
+    common = {"x-ms-version": "2021-12-02"}
+    for index, offset in enumerate(range(0, len(content), chunk_size)):
+        chunk = content[offset: offset + chunk_size]
+        raw_id = f"block-{index:08d}".encode("ascii")
+        block_id = base64.b64encode(raw_id).decode("ascii")
+        block_ids.append(block_id)
+        block_url = _add_query(signed_url, comp="block", blockid=block_id)
+        r = requests.put(block_url, data=chunk, headers=common, timeout=300)
+        print("AZURE_STAGE_BLOCK", index, r.status_code, len(chunk))
+        if r.status_code >= 400:
+            print("AZURE_STAGE_BLOCK_BODY", r.text[:2000])
+        r.raise_for_status()
+
+    xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?><BlockList>" + "".join(f"<Latest>{bid}</Latest>" for bid in block_ids) + "</BlockList>"
+    commit_url = _add_query(signed_url, comp="blocklist")
+    headers = {**common, "Content-Type": "application/xml", "x-ms-blob-content-type": "application/zip"}
+    r = requests.put(commit_url, data=xml.encode("utf-8"), headers=headers, timeout=300)
+    print("AZURE_COMMIT_BLOCK_LIST", r.status_code)
+    if r.status_code >= 400:
+        print("AZURE_COMMIT_BODY", r.text[:2000])
+    r.raise_for_status()
+
+
 def _publish_artifact(zip_path: Path) -> dict:
     token = os.environ.get("ACTIONS_RUNTIME_TOKEN")
     results_url = os.environ.get("ACTIONS_RESULTS_URL")
@@ -67,8 +102,6 @@ def _publish_artifact(zip_path: Path) -> dict:
         raise RuntimeError("GitHub Actions Results runtime variables are missing")
     run_backend_id, job_backend_id = _backend_ids(token)
 
-    # google.protobuf.StringValue has a scalar JSON representation, so
-    # mime_type and hash are strings rather than {value: ...} objects.
     create = _twirp(results_url, token, "CreateArtifact", {
         "workflow_run_backend_id": run_backend_id,
         "workflow_job_run_backend_id": job_backend_id,
@@ -84,20 +117,7 @@ def _publish_artifact(zip_path: Path) -> dict:
 
     content = zip_path.read_bytes()
     sha = hashlib.sha256(content).hexdigest()
-    put = requests.put(
-        signed,
-        data=content,
-        headers={
-            "x-ms-blob-type": "BlockBlob",
-            "x-ms-version": "2021-12-02",
-            "Content-Type": "application/zip",
-        },
-        timeout=300,
-    )
-    print("AZURE_BLOB_PUT_STATUS", put.status_code)
-    if put.status_code >= 400:
-        print("AZURE_BLOB_PUT_BODY", put.text[:2000])
-    put.raise_for_status()
+    _azure_block_blob_upload(signed, content)
 
     finalize = _twirp(results_url, token, "FinalizeArtifact", {
         "workflow_run_backend_id": run_backend_id,
