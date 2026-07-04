@@ -17,7 +17,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-ARTIFACT_NAME = "qqq-m1-2026-validation-direct"
+ARTIFACT_NAME = "qqq-m1-2026-validation-direct-v2"
 SERVICE = "github.actions.results.api.v1.ArtifactService"
 
 
@@ -67,12 +67,14 @@ def _publish_artifact(zip_path: Path) -> dict:
         raise RuntimeError("GitHub Actions Results runtime variables are missing")
     run_backend_id, job_backend_id = _backend_ids(token)
 
+    # google.protobuf.StringValue has a scalar JSON representation, so
+    # mime_type and hash are strings rather than {value: ...} objects.
     create = _twirp(results_url, token, "CreateArtifact", {
         "workflow_run_backend_id": run_backend_id,
         "workflow_job_run_backend_id": job_backend_id,
         "name": ARTIFACT_NAME,
         "version": 7,
-        "mime_type": {"value": "application/zip"},
+        "mime_type": "application/zip",
     })
     if not create.get("ok"):
         raise RuntimeError(f"CreateArtifact not ok: {create}")
@@ -85,7 +87,11 @@ def _publish_artifact(zip_path: Path) -> dict:
     put = requests.put(
         signed,
         data=content,
-        headers={"x-ms-blob-type": "BlockBlob", "Content-Type": "application/zip"},
+        headers={
+            "x-ms-blob-type": "BlockBlob",
+            "x-ms-version": "2021-12-02",
+            "Content-Type": "application/zip",
+        },
         timeout=300,
     )
     print("AZURE_BLOB_PUT_STATUS", put.status_code)
@@ -98,7 +104,7 @@ def _publish_artifact(zip_path: Path) -> dict:
         "workflow_job_run_backend_id": job_backend_id,
         "name": ARTIFACT_NAME,
         "size": str(len(content)),
-        "hash": {"value": f"sha256:{sha}"},
+        "hash": f"sha256:{sha}",
     })
     if not finalize.get("ok"):
         raise RuntimeError(f"FinalizeArtifact not ok: {finalize}")
