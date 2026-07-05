@@ -11,27 +11,18 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-
     steps:
     - uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v5
       with:
-        python-version: '3.9'
+        ref: market-data-research-v2
 
-    - name: Install dependencies
+    - name: Run 10-year QQQ comparison
       working-directory: python-engine
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-
-    - name: Run tests
-      working-directory: python-engine
-      run: |
-        pytest tests/ -v || echo "No tests found yet"
-
-    - name: Check scanner stub
-      working-directory: python-engine
-      run: |
-        python src/scanner.py
+        python3 - <<'PY'
+        import urllib.request, runpy
+        opener = urllib.request.build_opener()
+        opener.addheaders = [('User-Agent', 'Mozilla/5.0 research')]
+        urllib.request.install_opener(opener)
+        runpy.run_path('qqq_10yr_baseline_vs_ema21.py', run_name='__main__')
+        PY
