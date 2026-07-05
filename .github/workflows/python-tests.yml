@@ -12,6 +12,10 @@ jobs:
     permissions:
       contents: read
     steps:
-    - name: Probe QQQ and macro sources v2
-      run: |
-        python3 -c "import urllib.request; exec(urllib.request.urlopen('https://raw.githubusercontent.com/CarlosSilva1/can-slim-trading-system/market-data-research-v2/python-engine/qqq_macro_probe_v2.py').read())"
+    - uses: actions/checkout@v4
+      with:
+        ref: market-data-research-v2
+
+    - name: Run 10-year QQQ comparison
+      working-directory: python-engine
+      run: python3 qqq_10yr_baseline_vs_ema21.py
