@@ -20,13 +20,6 @@ jobs:
       with:
         python-version: '3.9'
 
-    - name: Install dependencies
+    - name: Run isolated QQQ trailing comparison
       working-directory: python-engine
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-
-    - name: Run QQQ trailing comparison only
-      working-directory: python-engine
-      run: |
-        pytest tests/test_qqq_trailing_comparison.py -v || true
+      run: python qqq_trailing_compare_stdlib.py
