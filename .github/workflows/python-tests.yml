@@ -12,6 +12,6 @@ jobs:
     permissions:
       contents: read
     steps:
-    - name: Run QQQ trailing comparison
+    - name: Run audited QQQ last-10 backtest
       run: |
-        python3 -c "import urllib.request; exec(urllib.request.urlopen('https://raw.githubusercontent.com/CarlosSilva1/can-slim-trading-system/market-data-research-v2/python-engine/qqq_trailing_compare_stdlib.py').read())"
+        python3 -c "import urllib.request; exec(urllib.request.urlopen('https://raw.githubusercontent.com/CarlosSilva1/can-slim-trading-system/market-data-research-v2/python-engine/qqq_last10_audited_backtest.py').read())"
