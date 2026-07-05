@@ -83,3 +83,4 @@ jobs:
         if-no-files-found: warn
 
 # Automation trigger: robust Yahoo price fallback 2026-07-05T20:03Z.
+# Automation trigger: rerun requested 2026-07-05T23:12Z.
