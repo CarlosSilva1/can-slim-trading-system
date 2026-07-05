@@ -41,3 +41,5 @@ jobs:
         name: qqq-10yr-audit-log
         path: python-engine/qqq_10yr_audit.log
         if-no-files-found: warn
+
+# Automation trigger: rerun locked QQQ audit.
