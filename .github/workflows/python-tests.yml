@@ -12,6 +12,6 @@ jobs:
     permissions:
       contents: read
     steps:
-    - name: Run 10-year locked QQQ challenge
+    - name: Probe 10-year QQQ and official macro sources
       run: |
-        python3 -c "import urllib.request; exec(urllib.request.urlopen('https://raw.githubusercontent.com/CarlosSilva1/can-slim-trading-system/market-data-research-v2/python-engine/qqq_10y_locked_challenge.py').read())"
+        python3 -c "import urllib.request; exec(urllib.request.urlopen('https://raw.githubusercontent.com/CarlosSilva1/can-slim-trading-system/market-data-research-v2/python-engine/qqq_10y_source_probe.py').read())"
