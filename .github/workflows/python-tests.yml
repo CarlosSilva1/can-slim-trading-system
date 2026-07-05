@@ -12,6 +12,6 @@ jobs:
     permissions:
       contents: read
     steps:
-    - name: Probe Nasdaq QQQ history
+    - name: Probe QQQ and macro sources v2
       run: |
-        python3 -c "import urllib.request; exec(urllib.request.urlopen('https://raw.githubusercontent.com/CarlosSilva1/can-slim-trading-system/market-data-research-v2/python-engine/nasdaq_qqq_probe.py').read())"
+        python3 -c "import urllib.request; exec(urllib.request.urlopen('https://raw.githubusercontent.com/CarlosSilva1/can-slim-trading-system/market-data-research-v2/python-engine/qqq_macro_probe_v2.py').read())"
