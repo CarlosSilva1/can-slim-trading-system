@@ -21,10 +21,50 @@ jobs:
       run: |
         set -o pipefail
         python3 - <<'PY' | tee qqq_10yr_audit.log
-        import urllib.request, runpy, sys, traceback
+        import csv, io, json, re, sys, time, traceback, urllib.request, runpy
+        from datetime import datetime, timedelta, timezone
+
+        _orig_urlopen = urllib.request.urlopen
+
+        def _epoch_utc(yyyymmdd):
+            return int(datetime.strptime(yyyymmdd, '%Y%m%d').replace(tzinfo=timezone.utc).timestamp())
+
+        def _qqq_yahoo_csv(stooq_url):
+            d1 = re.search(r'd1=(\d{8})', stooq_url)
+            d2 = re.search(r'd2=(\d{8})', stooq_url)
+            start = d1.group(1) if d1 else '20160101'
+            end = d2.group(1) if d2 else '20260626'
+            p1 = _epoch_utc(start)
+            p2 = _epoch_utc((datetime.strptime(end, '%Y%m%d') + timedelta(days=1)).strftime('%Y%m%d'))
+            yurl = f'https://query1.finance.yahoo.com/v8/finance/chart/QQQ?period1={p1}&period2={p2}&interval=1d&events=history&includeAdjustedClose=true'
+            req = urllib.request.Request(yurl, headers={'User-Agent':'Mozilla/5.0 research'})
+            data = json.loads(_orig_urlopen(req, timeout=60).read().decode('utf-8'))
+            result = data['chart']['result'][0]
+            ts = result['timestamp']
+            q = result['indicators']['quote'][0]
+            adj = result['indicators'].get('adjclose', [{}])[0].get('adjclose') or q['close']
+            out = io.StringIO()
+            w = csv.writer(out)
+            w.writerow(['Date','Open','High','Low','Close','Volume'])
+            for i,t in enumerate(ts):
+                o,h,l,c,v,a = q['open'][i],q['high'][i],q['low'][i],q['close'][i],q['volume'][i],adj[i]
+                if None in (o,h,l,c,v,a) or c == 0:
+                    continue
+                factor = a / c
+                day = datetime.fromtimestamp(t, tz=timezone.utc).strftime('%Y-%m-%d')
+                w.writerow([day, o*factor, h*factor, l*factor, a, v])
+            return out.getvalue().encode('utf-8')
+
+        def _urlopen_with_price_fallback(url, *args, **kwargs):
+            raw_url = getattr(url, 'full_url', url)
+            if isinstance(raw_url, str) and 'stooq.com/q/d/l/' in raw_url and 'qqq.us' in raw_url.lower():
+                return io.BytesIO(_qqq_yahoo_csv(raw_url))
+            return _orig_urlopen(url, *args, **kwargs)
+
         opener = urllib.request.build_opener()
         opener.addheaders = [('User-Agent', 'Mozilla/5.0 research')]
         urllib.request.install_opener(opener)
+        urllib.request.urlopen = _urlopen_with_price_fallback
         try:
             runpy.run_path('qqq_10yr_baseline_vs_ema21.py', run_name='__main__')
         except Exception:
@@ -42,4 +82,4 @@ jobs:
         path: python-engine/qqq_10yr_audit.log
         if-no-files-found: warn
 
-# Automation trigger: rerun locked QQQ audit 2026-07-05T19:04Z.
+# Automation trigger: robust Yahoo price fallback 2026-07-05T20:03Z.
