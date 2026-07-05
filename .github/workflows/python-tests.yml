@@ -2,7 +2,7 @@ name: Python Tests
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, develop, market-data-research-v2 ]
   pull_request:
     branches: [ main ]
 
@@ -19,10 +19,25 @@ jobs:
     - name: Run 10-year QQQ comparison
       working-directory: python-engine
       run: |
-        python3 - <<'PY'
-        import urllib.request, runpy
+        set -o pipefail
+        python3 - <<'PY' | tee qqq_10yr_audit.log
+        import urllib.request, runpy, sys, traceback
         opener = urllib.request.build_opener()
         opener.addheaders = [('User-Agent', 'Mozilla/5.0 research')]
         urllib.request.install_opener(opener)
-        runpy.run_path('qqq_10yr_baseline_vs_ema21.py', run_name='__main__')
+        try:
+            runpy.run_path('qqq_10yr_baseline_vs_ema21.py', run_name='__main__')
+        except Exception:
+            print('RUN_EXCEPTION_BEGIN')
+            traceback.print_exc()
+            print('RUN_EXCEPTION_END')
+            sys.exit(1)
         PY
+
+    - name: Upload QQQ audit log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: qqq-10yr-audit-log
+        path: python-engine/qqq_10yr_audit.log
+        if-no-files-found: warn
