@@ -18,4 +18,11 @@ jobs:
 
     - name: Run 10-year QQQ comparison
       working-directory: python-engine
-      run: python3 qqq_10yr_baseline_vs_ema21.py
+      run: |
+        python3 - <<'PY'
+        import urllib.request, runpy
+        opener = urllib.request.build_opener()
+        opener.addheaders = [('User-Agent', 'Mozilla/5.0 research')]
+        urllib.request.install_opener(opener)
+        runpy.run_path('qqq_10yr_baseline_vs_ema21.py', run_name='__main__')
+        PY
