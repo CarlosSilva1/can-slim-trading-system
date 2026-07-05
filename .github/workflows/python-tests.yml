@@ -11,15 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-
     steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.9'
-
-    - name: Run isolated QQQ trailing comparison
-      working-directory: python-engine
-      run: python qqq_trailing_compare_stdlib.py
+    - name: Run QQQ trailing comparison
+      run: |
+        python3 -c "import urllib.request; exec(urllib.request.urlopen('https://raw.githubusercontent.com/CarlosSilva1/can-slim-trading-system/market-data-research-v2/python-engine/qqq_trailing_compare_stdlib.py').read())"
